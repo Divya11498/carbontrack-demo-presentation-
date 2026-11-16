@@ -2,14 +2,15 @@ package com.carbontrack.backend.controller;
 
 import com.carbontrack.backend.entity.Badge;
 import com.carbontrack.backend.entity.User;
-import com.carbontrack.backend.entity.UserBadge;
+import com.carbontrack.backend.repository.BadgeRepository;
 import com.carbontrack.backend.repository.UserRepository;
-import com.carbontrack.backend.service.BadgeService;
-
+import com.carbontrack.backend.service.AchievementEvaluationService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
@@ -17,76 +18,39 @@ import java.util.List;
 @RequestMapping("/api/badges")
 public class BadgeController {
 
-    private final BadgeService badgeService;
+    private final BadgeRepository badgeRepository;
     private final UserRepository userRepository;
+    private final AchievementEvaluationService achievementEvaluationService;
 
     public BadgeController(
-            BadgeService badgeService,
-            UserRepository userRepository) {
-        this.badgeService = badgeService;
+            BadgeRepository badgeRepository,
+            UserRepository userRepository,
+            AchievementEvaluationService achievementEvaluationService) {
+        this.badgeRepository = badgeRepository;
         this.userRepository = userRepository;
+        this.achievementEvaluationService = achievementEvaluationService;
     }
 
-    // Get all available badges
     @GetMapping
     public List<Badge> getAllBadges() {
-        return badgeService.getAllBadges();
+        return badgeRepository.findAll();
     }
 
-    // Get badges of the currently authenticated user
     @GetMapping("/mine")
-    public ResponseEntity<?> getMyBadges(
-            Authentication authentication) {
-
-        if (authentication == null
-                || !authentication.isAuthenticated()
-                || authentication.getName() == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
-        }
-
-        User user = userRepository
-                .findByEmail(authentication.getName())
-                .orElse(null);
-
+    public ResponseEntity<?> getMyBadges(Authentication authentication) {
+        User user = getAuthenticatedUser(authentication);
         if (user == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
-
-        List<UserBadge> badges =
-                badgeService.getUserBadges(user.getId());
-
-        return ResponseEntity.ok(badges);
+        return ResponseEntity.ok(achievementEvaluationService.getUserBadgesWithProgress(user.getId()));
     }
 
-    // Get badges by user ID
-    @GetMapping("/users/{userId}")
-    public ResponseEntity<?> getUserBadges(
-            @PathVariable Long userId,
-            Authentication authentication) {
-
-        if (authentication == null
-                || !authentication.isAuthenticated()
-                || authentication.getName() == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+    private User getAuthenticatedUser(Authentication authentication) {
+        if (authentication == null || !authentication.isAuthenticated() || authentication.getName() == null) {
+            return null;
         }
-
-        User authenticatedUser = userRepository
-                .findByEmail(authentication.getName())
+        return userRepository.findByEmail(authentication.getName())
+                .filter(u -> Boolean.TRUE.equals(u.getIsActive()))
                 .orElse(null);
-
-        if (authenticatedUser == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
-        }
-
-        // Users can retrieve only their own badges
-        if (!String.valueOf(authenticatedUser.getId())
-                .equals(String.valueOf(userId))) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
-        }
-
-        List<UserBadge> badges =
-                badgeService.getUserBadges(userId);
-
-        return ResponseEntity.ok(badges);
     }
 }

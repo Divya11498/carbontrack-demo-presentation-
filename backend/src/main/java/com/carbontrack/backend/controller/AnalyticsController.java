@@ -1,67 +1,77 @@
-
 package com.carbontrack.backend.controller;
 
-import com.carbontrack.backend.service.ActivityLogService;
-import org.springframework.format.annotation.DateTimeFormat;
+import com.carbontrack.backend.entity.User;
+import com.carbontrack.backend.repository.UserRepository;
+import com.carbontrack.backend.service.AnalyticsService;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
-
-import java.math.BigDecimal;
-import java.time.LocalDate;
-import java.util.Map;
 
 @RestController
 @RequestMapping("/api/analytics")
 public class AnalyticsController {
 
-    private final ActivityLogService activityLogService;
+    private final UserRepository userRepository;
+    private final AnalyticsService analyticsService;
 
-    public AnalyticsController(ActivityLogService activityLogService) {
-        this.activityLogService = activityLogService;
+    public AnalyticsController(UserRepository userRepository, AnalyticsService analyticsService) {
+        this.userRepository = userRepository;
+        this.analyticsService = analyticsService;
     }
 
-    @GetMapping("/daily/{userId}")
-    public ResponseEntity<Map<String, Object>> getDailyEmissions(
-            @PathVariable Long userId,
-            @RequestParam
-            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
-            LocalDate date) {
+    @GetMapping("/summary")
+    public ResponseEntity<?> getSummary(
+            @RequestParam(required = false) String period,
+            @RequestParam(required = false) String startDate,
+            @RequestParam(required = false) String endDate,
+            Authentication authentication) {
 
-        return ResponseEntity.ok(Map.of(
-                "userId", userId,
-                "period", "daily",
-                "date", date,
-                "co2eKg", activityLogService.getDailyEmissions(userId, date)
-        ));
+        User user = getAuthenticatedUser(authentication);
+        if (user == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+        return ResponseEntity.ok(analyticsService.getSummary(user.getId(), period, startDate, endDate));
     }
 
-    @GetMapping("/weekly/{userId}")
-    public ResponseEntity<Map<String, Object>> getWeeklyEmissions(
-            @PathVariable Long userId,
-            @RequestParam
-            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
-            LocalDate date) {
+    @GetMapping("/trends")
+    public ResponseEntity<?> getTrends(
+            @RequestParam(defaultValue = "30d") String period,
+            @RequestParam(required = false) String startDate,
+            @RequestParam(required = false) String endDate,
+            Authentication authentication) {
 
-        return ResponseEntity.ok(Map.of(
-                "userId", userId,
-                "period", "weekly",
-                "date", date,
-                "co2eKg", activityLogService.getWeeklyEmissions(userId, date)
-        ));
+        User user = getAuthenticatedUser(authentication);
+        if (user == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+        return ResponseEntity.ok(analyticsService.getTrends(user.getId(), period, startDate, endDate));
     }
 
-    @GetMapping("/monthly/{userId}")
-    public ResponseEntity<Map<String, Object>> getMonthlyEmissions(
-            @PathVariable Long userId,
-            @RequestParam
-            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
-            LocalDate date) {
+    @GetMapping("/benchmarks")
+    public ResponseEntity<?> getBenchmarks(Authentication authentication) {
+        User user = getAuthenticatedUser(authentication);
+        if (user == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+        return ResponseEntity.ok(analyticsService.getBenchmarks(user.getId()));
+    }
 
-        return ResponseEntity.ok(Map.of(
-                "userId", userId,
-                "period", "monthly",
-                "date", date,
-                "co2eKg", activityLogService.getMonthlyEmissions(userId, date)
-        ));
+    @GetMapping("/peer-benchmarking")
+    public ResponseEntity<?> getPeerBenchmarking(Authentication authentication) {
+        User user = getAuthenticatedUser(authentication);
+        if (user == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+        return ResponseEntity.ok(analyticsService.getPeerBenchmarking(user.getId()));
+    }
+
+    private User getAuthenticatedUser(Authentication authentication) {
+        if (authentication == null || !authentication.isAuthenticated() || authentication.getName() == null) {
+            return null;
+        }
+        return userRepository.findByEmail(authentication.getName())
+                .filter(u -> Boolean.TRUE.equals(u.getIsActive()))
+                .orElse(null);
     }
 }

@@ -33,19 +33,32 @@ public class BadgeEventListener {
     @EventListener
     @Transactional
     public void handleActivityLogged(ActivityLoggedEvent event) {
-        if (event == null || event.getUserId() == null
-                || event.getLogDate() == null) {
+
+        if (event == null
+                || event.userId() == null
+                || event.activityId() == null) {
+            return;
+        }
+
+        ActivityLog activity = activityLogRepository
+                .findById(event.activityId())
+                .orElse(null);
+
+        if (activity == null
+                || activity.getLogDate() == null
+                || !event.userId().equals(activity.getUserId())) {
             return;
         }
 
         awardSevenDayStreakBadge(
-                event.getUserId(),
-                event.getLogDate()
+                event.userId(),
+                activity.getLogDate()
         );
     }
 
     private void awardSevenDayStreakBadge(
-            Long userId, LocalDate logDate) {
+            Long userId,
+            LocalDate logDate) {
 
         List<ActivityLog> activities =
                 activityLogRepository.findByUserId(userId);

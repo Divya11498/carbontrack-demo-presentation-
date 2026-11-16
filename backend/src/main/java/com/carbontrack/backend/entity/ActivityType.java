@@ -1,37 +1,29 @@
-
 package com.carbontrack.backend.entity;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
-
-import java.time.OffsetDateTime;
+import jakarta.persistence.*;
 
 @Entity
 @Table(name = "activity_types")
 public class ActivityType {
 
     @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Short id;
 
     @Column(name = "category_id", nullable = false)
     private Short categoryId;
 
-    @Column(name = "name", nullable = false, length = 100)
+    @Column(nullable = false, length = 100)
     private String name;
 
-    @Column(name = "unit_type", nullable = false, length = 30)
+    @Column(name = "unit_type", nullable = false, length = 40)
     private String unitType;
 
-    @Column(name = "description")
+    @Column(columnDefinition = "TEXT")
     private String description;
 
     @Column(name = "is_active", nullable = false)
-    private boolean active;
-
-    @Column(name = "created_at", insertable = false, updatable = false)
-    private OffsetDateTime createdAt;
+    private Boolean isActive = true;
 
     public ActivityType() {
     }
@@ -40,27 +32,47 @@ public class ActivityType {
         return id;
     }
 
+    public void setId(Short id) {
+        this.id = id;
+    }
+
     public Short getCategoryId() {
         return categoryId;
+    }
+
+    public void setCategoryId(Short categoryId) {
+        this.categoryId = categoryId;
     }
 
     public String getName() {
         return name;
     }
 
+    public void setName(String name) {
+        this.name = name;
+    }
+
     public String getUnitType() {
         return unitType;
+    }
+
+    public void setUnitType(String unitType) {
+        this.unitType = unitType;
     }
 
     public String getDescription() {
         return description;
     }
 
-    public boolean isActive() {
-        return active;
+    public void setDescription(String description) {
+        this.description = description;
     }
 
-    public OffsetDateTime getCreatedAt() {
-        return createdAt;
+    public Boolean getIsActive() {
+        return isActive;
+    }
+
+    public void setIsActive(Boolean isActive) {
+        this.isActive = isActive;
     }
 }

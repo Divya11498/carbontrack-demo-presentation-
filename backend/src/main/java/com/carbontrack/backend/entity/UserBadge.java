@@ -1,7 +1,7 @@
-
-        package com.carbontrack.backend.entity;
+package com.carbontrack.backend.entity;
 
 import jakarta.persistence.*;
+import java.time.OffsetDateTime;
 
 @Entity
 @Table(name = "user_badges")
@@ -17,7 +17,20 @@ public class UserBadge {
     @Column(name = "badge_id", nullable = false)
     private Short badgeId;
 
+    @Column(name = "earned_at", nullable = false)
+    private OffsetDateTime earnedAt = OffsetDateTime.now();
+
+    @Column(name = "source_event", length = 120)
+    private String sourceEvent;
+
     public UserBadge() {
+    }
+
+    public UserBadge(Long userId, Short badgeId, String sourceEvent) {
+        this.userId = userId;
+        this.badgeId = badgeId;
+        this.sourceEvent = sourceEvent;
+        this.earnedAt = OffsetDateTime.now();
     }
 
     public Long getId() {
@@ -42,5 +55,21 @@ public class UserBadge {
 
     public void setBadgeId(Short badgeId) {
         this.badgeId = badgeId;
+    }
+
+    public OffsetDateTime getEarnedAt() {
+        return earnedAt;
+    }
+
+    public void setEarnedAt(OffsetDateTime earnedAt) {
+        this.earnedAt = earnedAt;
+    }
+
+    public String getSourceEvent() {
+        return sourceEvent;
+    }
+
+    public void setSourceEvent(String sourceEvent) {
+        this.sourceEvent = sourceEvent;
     }
 }

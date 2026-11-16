@@ -1,0 +1,4 @@
+-- Reference pointer: this file is the target-schema reference location.
+-- Keep it synchronized with the schema produced by the approved migrations.
+-- For a fresh database, V1__create_schema.sql defines the complete selected ERD schema.
+-- Do not execute this reference file automatically over a database with existing data.

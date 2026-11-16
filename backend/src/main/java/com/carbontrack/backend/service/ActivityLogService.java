@@ -1,168 +1,206 @@
 package com.carbontrack.backend.service;
 
+import com.carbontrack.backend.entity.ActivityCategory;
 import com.carbontrack.backend.entity.ActivityLog;
+import com.carbontrack.backend.entity.ActivityType;
 import com.carbontrack.backend.event.ActivityLoggedEvent;
+import com.carbontrack.backend.repository.ActivityCategoryRepository;
 import com.carbontrack.backend.repository.ActivityLogRepository;
+import com.carbontrack.backend.repository.ActivityTypeRepository;
 
-import org.springframework.cache.annotation.CacheEvict;
-import org.springframework.cache.annotation.Cacheable;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.time.DayOfWeek;
 import java.time.LocalDate;
-import java.time.temporal.TemporalAdjusters;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 public class ActivityLogService {
 
     private final ActivityLogRepository activityLogRepository;
     private final EmissionCalculationService emissionCalculationService;
-    private final ApplicationEventPublisher eventPublisher;
+    private final ActivityTypeRepository activityTypeRepository;
+    private final ActivityCategoryRepository activityCategoryRepository;
+
+    @Autowired(required = false)
+    private ApplicationEventPublisher eventPublisher;
+
+    @Autowired(required = false)
+    private CacheEvictionService cacheEvictionService;
 
     public ActivityLogService(
             ActivityLogRepository activityLogRepository,
             EmissionCalculationService emissionCalculationService,
-            ApplicationEventPublisher eventPublisher) {
+            ActivityTypeRepository activityTypeRepository,
+            ActivityCategoryRepository activityCategoryRepository) {
 
         this.activityLogRepository = activityLogRepository;
         this.emissionCalculationService = emissionCalculationService;
-        this.eventPublisher = eventPublisher;
+        this.activityTypeRepository = activityTypeRepository;
+        this.activityCategoryRepository = activityCategoryRepository;
     }
 
+    // Create a new activity and calculate its emissions
     @Transactional
-    @CacheEvict(cacheNames = "analytics", allEntries = true)
     public ActivityLog createActivity(ActivityLog activityLog) {
-
         if (activityLog == null) {
-            throw new IllegalArgumentException(
-                    "Activity details are required");
+            throw new IllegalArgumentException("Activity log cannot be null.");
         }
 
-        if (activityLog.getUserId() == null) {
-            throw new IllegalArgumentException(
-                    "User ID is required");
-        }
+        LocalDate date = activityLog.getLogDate() != null ? activityLog.getLogDate() : LocalDate.now();
+        activityLog.setLogDate(date);
 
-        if (activityLog.getCategoryId() == null) {
-            throw new IllegalArgumentException(
-                    "Category ID is required");
-        }
-
-        EmissionCalculationResult calculation =
+        EmissionCalculationResult result =
                 emissionCalculationService.calculateEmission(
                         activityLog.getActivityTypeId(),
                         activityLog.getQuantity(),
                         activityLog.getUnit(),
-                        activityLog.getLogDate()
+                        date
                 );
 
-        if (calculation == null
-                || calculation.co2eKg() == null
-                || calculation.emissionFactorId() == null) {
+        activityLog.setCo2eKg(result.co2eKg());
+        activityLog.setEmissionFactorId(result.emissionFactorId());
 
-            throw new IllegalStateException(
-                    "Emission calculation did not return a valid result");
-        }
-
-        activityLog.setCo2eKg(calculation.co2eKg());
-        activityLog.setEmissionFactorId(
-                calculation.emissionFactorId());
-
-        if (activityLog.getSource() == null
-                || activityLog.getSource().isBlank()) {
-            activityLog.setSource("MANUAL");
-        }
-
-        ActivityLog savedActivity =
-                activityLogRepository.save(activityLog);
-
-        eventPublisher.publishEvent(
-                new ActivityLoggedEvent(
-                        savedActivity.getUserId(),
-                        savedActivity.getLogDate()
-                )
-        );
-
-        return savedActivity;
+        ActivityLog saved = activityLogRepository.save(activityLog);
+        publishActivityChange(saved.getUserId(), saved.getId(), "CREATED");
+        return saved;
     }
 
+    // Calculate CO2 without saving to database (real-time preview)
+    public EmissionCalculationResult calculatePreview(
+            Short activityTypeId,
+            BigDecimal quantity,
+            String unit,
+            LocalDate logDate) {
+        LocalDate date = logDate != null ? logDate : LocalDate.now();
+        return emissionCalculationService.calculateEmission(activityTypeId, quantity, unit, date);
+    }
+
+    // Update an existing activity (verifying user ownership)
+    @Transactional
+    public ActivityLog updateActivity(Long id, Long userId, ActivityLog updated) {
+        ActivityLog existing = activityLogRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Activity not found with id: " + id));
+
+        if (!existing.getUserId().equals(userId)) {
+            throw new IllegalArgumentException("You are not authorized to edit this activity.");
+        }
+
+        LocalDate date = updated.getLogDate() != null ? updated.getLogDate() : existing.getLogDate();
+
+        EmissionCalculationResult result =
+                emissionCalculationService.calculateEmission(
+                        updated.getActivityTypeId(),
+                        updated.getQuantity(),
+                        updated.getUnit(),
+                        date
+                );
+
+        existing.setCategoryId(updated.getCategoryId());
+        existing.setActivityTypeId(updated.getActivityTypeId());
+        existing.setQuantity(updated.getQuantity());
+        existing.setUnit(updated.getUnit());
+        existing.setLogDate(date);
+        existing.setNotes(updated.getNotes());
+        existing.setCo2eKg(result.co2eKg());
+        existing.setEmissionFactorId(result.emissionFactorId());
+
+        ActivityLog saved = activityLogRepository.save(existing);
+        publishActivityChange(saved.getUserId(), saved.getId(), "UPDATED");
+        return saved;
+    }
+
+    // Delete an activity (verifying user ownership)
+    @Transactional
+    public void deleteActivity(Long id, Long userId) {
+        ActivityLog existing = activityLogRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Activity not found with id: " + id));
+
+        if (!existing.getUserId().equals(userId)) {
+            throw new IllegalArgumentException("You are not authorized to delete this activity.");
+        }
+
+        activityLogRepository.delete(existing);
+        publishActivityChange(userId, id, "DELETED");
+    }
+
+    private void publishActivityChange(Long userId, Long activityId, String actionType) {
+        if (cacheEvictionService != null) {
+            cacheEvictionService.evictActivityDerivedCaches();
+        }
+        if (eventPublisher != null && userId != null) {
+            eventPublisher.publishEvent(new ActivityLoggedEvent(userId, activityId, actionType));
+        }
+    }
+
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> getFrequentActivities(Long userId) {
+        if (userId == null || userId <= 0) {
+            return List.of();
+        }
+        List<ActivityLog> logs = activityLogRepository.findByUserIdOrderByLogDateDesc(userId);
+        if (logs.isEmpty()) {
+            return List.of();
+        }
+
+        Map<Short, ActivityType> typeMap = activityTypeRepository.findByIsActiveTrue().stream()
+                .collect(Collectors.toMap(ActivityType::getId, t -> t));
+        Map<Short, ActivityCategory> catMap = activityCategoryRepository.findAll().stream()
+                .collect(Collectors.toMap(ActivityCategory::getId, c -> c));
+
+        Map<Short, List<ActivityLog>> grouped = logs.stream()
+                .collect(Collectors.groupingBy(ActivityLog::getActivityTypeId));
+
+        return grouped.entrySet().stream()
+                .sorted((a, b) -> Integer.compare(b.getValue().size(), a.getValue().size()))
+                .limit(6)
+                .map(entry -> {
+                    ActivityType t = typeMap.get(entry.getKey());
+                    List<ActivityLog> items = entry.getValue();
+                    ActivityLog latest = items.get(0);
+                    ActivityCategory cat = catMap.get(latest.getCategoryId());
+                    Map<String, Object> m = new HashMap<>();
+                    m.put("activityTypeId", entry.getKey());
+                    m.put("categoryId", latest.getCategoryId());
+                    m.put("categoryName", cat != null ? cat.getName() : "transport");
+                    m.put("activityName", t != null ? t.getName() : "Activity #" + entry.getKey());
+                    m.put("unit", latest.getUnit());
+                    m.put("defaultQuantity", latest.getQuantity());
+                    m.put("co2eKg", latest.getCo2eKg());
+                    m.put("count", items.size());
+                    return m;
+                })
+                .toList();
+    }
+
+    // Get all activities
+    @Transactional(readOnly = true)
+    public List<ActivityLog> getAllActivities() {
+        return activityLogRepository.findAll();
+    }
+
+    // Get activities for a specific user ordered by latest date
     @Transactional(readOnly = true)
     public List<ActivityLog> getActivitiesByUserId(Long userId) {
-        return activityLogRepository.findByUserId(userId);
+        if (userId == null || userId <= 0) {
+            throw new IllegalArgumentException("User ID must be a positive number.");
+        }
+        return activityLogRepository.findByUserIdOrderByLogDateDesc(userId);
     }
 
-    @Cacheable(
-            cacheNames = "analytics",
-            key = "#userId + ':daily:' + #date"
-    )
+    // Get all active activity types
     @Transactional(readOnly = true)
-    public Map<String, Object> getDailyEmissions(
-            Long userId, LocalDate date) {
-
-        BigDecimal total =
-                activityLogRepository.sumEmissionsByUserAndDateRange(
-                        userId, date, date.plusDays(1));
-
-        return createResponse(userId, total, "daily", date);
+    public List<ActivityType> getActivityTypes() {
+        return activityTypeRepository.findByIsActiveTrue();
     }
 
-    @Cacheable(
-            cacheNames = "analytics",
-            key = "#userId + ':weekly:' + #date"
-    )
+    // Get all categories
     @Transactional(readOnly = true)
-    public Map<String, Object> getWeeklyEmissions(
-            Long userId, LocalDate date) {
-
-        LocalDate startDate = date.with(
-                TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
-
-        BigDecimal total =
-                activityLogRepository.sumEmissionsByUserAndDateRange(
-                        userId, startDate, startDate.plusWeeks(1));
-
-        return createResponse(userId, total, "weekly", startDate);
-    }
-
-    @Cacheable(
-            cacheNames = "analytics",
-            key = "#userId + ':monthly:' + #date"
-    )
-    @Transactional(readOnly = true)
-    public Map<String, Object> getMonthlyEmissions(
-            Long userId, LocalDate date) {
-
-        LocalDate startDate = date.withDayOfMonth(1);
-
-        BigDecimal total =
-                activityLogRepository.sumEmissionsByUserAndDateRange(
-                        userId, startDate, startDate.plusMonths(1));
-
-        return createResponse(userId, total, "monthly", startDate);
-    }
-
-    private Map<String, Object> createResponse(
-            Long userId,
-            BigDecimal total,
-            String period,
-            LocalDate date) {
-
-        Map<String, Object> response = new LinkedHashMap<>();
-
-        response.put(
-                "co2eKg",
-                total != null ? total : BigDecimal.ZERO);
-
-        response.put("period", period);
-        response.put("date", date);
-        response.put("userId", userId);
-
-        return response;
+    public List<ActivityCategory> getCategories() {
+        return activityCategoryRepository.findAll();
     }
 }

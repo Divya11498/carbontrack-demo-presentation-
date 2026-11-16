@@ -1,226 +1,542 @@
-import { useMemo, useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Award,
-  Leaf,
   Flame,
+  Leaf,
+  Zap,
+  ShieldCheck,
   Target,
-  TrendingDown,
-  LockKeyhole,
+  Lock,
   CheckCircle2,
+  Bike,
+  Utensils,
+  Crown,
+  Calendar,
   Sparkles,
-  Trophy,
+  ArrowRight,
+  Shield,
+  Medal,
+  Share2,
 } from "lucide-react";
+import { apiRequest } from "../api";
+import BadgeCelebrationModal from "./BadgeCelebrationModal";
+import BadgeShareModal from "./BadgeShareModal";
 
-function getActivityDateKey(activity) {
-  const value = activity.date || activity.logDate || activity.log_date || activity.createdAt;
-  if (!value) return null;
+const CATEGORY_MAP = {
+  week_warrior: "Consistency",
+  month_master: "Consistency",
+  reduction_10kg: "Carbon Reduction",
+  reduction_25kg: "Carbon Reduction",
+  reduction_50kg: "Carbon Reduction",
+  carbon_cutter: "Carbon Reduction",
+  first_goal_achieved: "Goal Completion",
+  green_leader: "Goal Completion",
+  eco_pioneer: "Sustainability Milestones",
+  bike_buddy: "Sustainability Milestones",
+  vegetarian_victor: "Sustainability Milestones",
+  sustainability_champion: "Sustainability Milestones",
+};
 
-  // Keep date-only values as YYYY-MM-DD strings to avoid UTC timezone shifts.
-  const key = String(value).slice(0, 10);
-  const parsed = new Date(`${key}T12:00:00`);
-  return /^\d{4}-\d{2}-\d{2}$/.test(key) && !Number.isNaN(parsed.getTime())
-    ? key
-    : null;
-}
+const BADGE_VISUALS = {
+  eco_pioneer: { icon: Leaf, color: "#6B7B4C", bg: "#E8EEDC", shape: "emblem" },
+  week_warrior: { icon: Flame, color: "#C4873B", bg: "#F7EBDC", shape: "medal" },
+  first_goal_achieved: { icon: Target, color: "#547B8F", bg: "#E4EEF3", shape: "ribbon" },
+  reduction_10kg: { icon: ShieldCheck, color: "#6B7B4C", bg: "#E8EEDC", shape: "shield" },
+  reduction_25kg: { icon: Zap, color: "#79688F", bg: "#ECE7F3", shape: "shield" },
+  reduction_50kg: { icon: Crown, color: "#C4873B", bg: "#F7EBDC", shape: "shield" },
+  carbon_cutter: { icon: Zap, color: "#547B8F", bg: "#E4EEF3", shape: "shield" },
+  month_master: { icon: Calendar, color: "#7E8C44", bg: "#F0F4DC", shape: "medal" },
+  bike_buddy: { icon: Bike, color: "#6B7B4C", bg: "#E8EEDC", shape: "emblem" },
+  vegetarian_victor: { icon: Utensils, color: "#7E8C44", bg: "#F0F4DC", shape: "emblem" },
+  green_leader: { icon: Crown, color: "#C4873B", bg: "#F7EBDC", shape: "ribbon" },
+  sustainability_champion: { icon: Award, color: "#79688F", bg: "#ECE7F3", shape: "emblem" },
+};
 
-function calculateStreak(activities) {
-  const days = new Set(activities.map(getActivityDateKey).filter(Boolean));
-  if (!days.size) return 0;
+export default function Achievements({ token, onNavigate, userName }) {
+  const [badges, setBadges] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [categoryTab, setCategoryTab] = useState("ALL");
+  const [statusFilter, setStatusFilter] = useState("ALL");
+  const [celebratingBadge, setCelebratingBadge] = useState(null);
+  const [sharingBadge, setSharingBadge] = useState(null);
 
-  const cursor = new Date();
-  cursor.setHours(12, 0, 0, 0);
-  const localDateKey = (date) => {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
-  };
+  const resolvedUserName = userName || localStorage.getItem("carbontrack_userName") || "Eco Champion";
 
-  if (!days.has(localDateKey(cursor))) cursor.setDate(cursor.getDate() - 1);
+  useEffect(() => {
+    async function loadBadges() {
+      if (!token) {
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      setError("");
+      try {
+        const res = await apiRequest("/api/badges/mine", { token });
+        if (Array.isArray(res)) {
+          setBadges(res);
 
-  let streak = 0;
-  while (days.has(localDateKey(cursor))) {
-    streak += 1;
-    cursor.setDate(cursor.getDate() - 1);
-  }
-  return streak;
-}
+          // Check for newly unlocked badges that have not been celebrated yet
+          try {
+            const celebratedRaw = localStorage.getItem("carbontrack_celebrated_badges");
+            const celebratedList = celebratedRaw ? JSON.parse(celebratedRaw) : [];
+            const newlyUnlocked = res.find(
+              (b) => b.unlocked && !celebratedList.includes(b.code || String(b.id))
+            );
 
-const achievementCatalog = [
-  {
-    id: "first-step",
-    title: "First Step",
-    description: "Log your first carbon-footprint activity.",
-    category: "Getting started",
-    icon: Leaf,
-    color: "green",
-    progressLabel: "Activities logged",
-  },
-  {
-    id: "week-warrior",
-    title: "7-Day Warrior",
-    description: "Log at least one activity on seven consecutive days.",
-    category: "Consistency",
-    icon: Flame,
-    color: "orange",
-    progressLabel: "Consecutive days",
-  },
-  {
-    id: "goal-getter",
-    title: "Goal Getter",
-    description: "Complete a personal emissions-reduction goal.",
-    category: "Goals",
-    icon: Target,
-    color: "purple",
-    progressLabel: "Completed goals",
-  },
-  {
-    id: "carbon-cutter-10",
-    title: "Carbon Cutter",
-    description: "Document a reduction of 10 kg CO₂e against a baseline.",
-    category: "Reduction",
-    icon: TrendingDown,
-    color: "blue",
-    progressLabel: "Verified kg reduced",
-  },
-  {
-    id: "carbon-cutter-25",
-    title: "Climate Champion",
-    description: "Document a reduction of 25 kg CO₂e against a baseline.",
-    category: "Reduction",
-    icon: Award,
-    color: "teal",
-    progressLabel: "Verified kg reduced",
-  },
-  {
-    id: "carbon-cutter-50",
-    title: "Planet Protector",
-    description: "Document a reduction of 50 kg CO₂e against a baseline.",
-    category: "Reduction",
-    icon: Trophy,
-    color: "gold",
-    progressLabel: "Verified kg reduced",
-  },
-];
+            if (newlyUnlocked) {
+              setCelebratingBadge(newlyUnlocked);
+              const updatedList = [...celebratedList, newlyUnlocked.code || String(newlyUnlocked.id)];
+              localStorage.setItem("carbontrack_celebrated_badges", JSON.stringify(updatedList));
+            }
+          } catch {
+            // LocalStorage fallback
+          }
+        }
+      } catch (err) {
+        setError(err.message || "Unable to fetch achievements.");
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadBadges();
+  }, [token]);
 
-export default function Achievements({ activities = [], goals = [], reductions = [] }) {
-  const [filter, setFilter] = useState("all");
+  const unlockedCount = badges.filter((b) => b.unlocked).length;
+  const lockedBadges = badges.filter((b) => !b.unlocked);
 
-  const stats = useMemo(() => {
-    const activityCount = Array.isArray(activities) ? activities.length : 0;
-    const streak = calculateStreak(Array.isArray(activities) ? activities : []);
-    const completedGoals = Array.isArray(goals)
-      ? goals.filter((goal) => ["COMPLETED", "completed", "ACHIEVED", "achieved"].includes(goal.status)).length
-      : 0;
-    const verifiedReduction = Array.isArray(reductions)
-      ? reductions.reduce((sum, item) => sum + Math.max(0, Number(item.reducedKg ?? item.reduced_kg ?? item.co2eReduced ?? 0)), 0)
-      : 0;
+  // Find next achievable milestone (closest locked badge)
+  const nextMilestone = [...lockedBadges].sort((a, b) => {
+    const pA = Number(a.progressPercent || 0);
+    const pB = Number(b.progressPercent || 0);
+    return pB - pA;
+  })[0];
 
-    return { activityCount, streak, completedGoals, verifiedReduction };
-  }, [activities, goals, reductions]);
-
-  const achievements = useMemo(() => {
-    const values = {
-      "first-step": { current: Math.min(stats.activityCount, 1), target: 1, unlocked: stats.activityCount >= 1 },
-      "week-warrior": { current: Math.min(stats.streak, 7), target: 7, unlocked: stats.streak >= 7 },
-      "goal-getter": { current: Math.min(stats.completedGoals, 1), target: 1, unlocked: stats.completedGoals >= 1 },
-      "carbon-cutter-10": { current: Math.min(stats.verifiedReduction, 10), target: 10, unlocked: stats.verifiedReduction >= 10 },
-      "carbon-cutter-25": { current: Math.min(stats.verifiedReduction, 25), target: 25, unlocked: stats.verifiedReduction >= 25 },
-      "carbon-cutter-50": { current: Math.min(stats.verifiedReduction, 50), target: 50, unlocked: stats.verifiedReduction >= 50 },
-    };
-
-    return achievementCatalog.map((item) => ({ ...item, ...values[item.id] }));
-  }, [stats]);
-
-  const unlockedCount = achievements.filter((item) => item.unlocked).length;
-  const visibleAchievements = achievements.filter((item) => {
-    if (filter === "unlocked") return item.unlocked;
-    if (filter === "locked") return !item.unlocked;
+  // Filtered badges
+  const filteredBadges = badges.filter((b) => {
+    const category = CATEGORY_MAP[b.code] || "Sustainability Milestones";
+    if (categoryTab !== "ALL" && category !== categoryTab) {
+      return false;
+    }
+    if (statusFilter === "UNLOCKED" && !b.unlocked) return false;
+    if (statusFilter === "LOCKED" && b.unlocked) return false;
     return true;
   });
 
+  const getShapeIcon = (shape, IconComponent) => {
+    if (shape === "shield") {
+      return (
+        <div className="badge-shape-container badge-shape-shield">
+          <IconComponent size={24} />
+        </div>
+      );
+    }
+    if (shape === "medal") {
+      return (
+        <div className="badge-shape-container badge-shape-medal">
+          <IconComponent size={24} />
+        </div>
+      );
+    }
+    if (shape === "ribbon") {
+      return (
+        <div className="badge-shape-container badge-shape-ribbon">
+          <IconComponent size={24} />
+        </div>
+      );
+    }
+    return (
+      <div className="badge-shape-container badge-shape-emblem">
+        <IconComponent size={24} />
+      </div>
+    );
+  };
+
   return (
-    <div className="page-content achievements-page">
-      <div className="page-heading">
-        <h2>Achievements & Badges 🏅</h2>
-        <p>Celebrate the habits and milestones that make your footprint more sustainable.</p>
+    <div className="achievements-page">
+      {/* Page Title & Status Filters */}
+      <div className="page-header-row" style={{ flexWrap: "wrap", gap: "12px", marginBottom: "16px" }}>
+        <div>
+          <h2 className="page-title">Achievements & Sustainability Badges</h2>
+          <p className="page-subtitle">
+            Celebrate eco-milestones automatically earned from your logged activities, streaks, and carbon reductions.
+          </p>
+        </div>
+
+        <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+          {[
+            { id: "ALL", label: `All (${badges.length})` },
+            { id: "UNLOCKED", label: `Earned (${unlockedCount})` },
+            { id: "LOCKED", label: `In Progress (${badges.length - unlockedCount})` },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className={statusFilter === tab.id ? "btn-primary-gradient" : "btn-outline"}
+              style={{ padding: "6px 14px", fontSize: "0.84rem", borderRadius: "8px" }}
+              onClick={() => setStatusFilter(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      <section className="achievements-hero">
-        <div className="achievements-hero-mark"><Sparkles size={30} /></div>
-        <div className="achievements-hero-copy">
-          <p className="achievements-eyebrow">YOUR SUSTAINABILITY JOURNEY</p>
-          <h3>Every greener choice counts.</h3>
-          <p>Keep logging activities, building streaks, and working toward your reduction goals to unlock badges.</p>
-        </div>
-        <div className="achievements-total">
-          <strong>{unlockedCount}<span>/{achievements.length}</span></strong>
-          <small>Badges earned</small>
-        </div>
-      </section>
+      {/* Category Tabs */}
+      <div
+        className="achievement-category-tabs"
+        style={{
+          display: "flex",
+          gap: "8px",
+          marginBottom: "20px",
+          overflowX: "auto",
+          paddingBottom: "4px",
+        }}
+      >
+        {[
+          { id: "ALL", label: "All Categories", icon: Award },
+          { id: "Consistency", label: "Consistency", icon: Medal },
+          { id: "Carbon Reduction", label: "Carbon Reduction", icon: Shield },
+          { id: "Goal Completion", label: "Goal Completion", icon: Target },
+          { id: "Sustainability Milestones", label: "Sustainability Milestones", icon: Sparkles },
+        ].map((cat) => {
+          const CatIcon = cat.icon;
+          const isActive = categoryTab === cat.id;
+          return (
+            <button
+              key={cat.id}
+              type="button"
+              onClick={() => setCategoryTab(cat.id)}
+              className={`category-tab-btn ${isActive ? "active" : ""}`}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "8px",
+                padding: "8px 16px",
+                borderRadius: "999px",
+                fontSize: "0.85rem",
+                fontWeight: isActive ? 700 : 500,
+                border: isActive ? "1px solid var(--emerald)" : "1px solid var(--border)",
+                background: isActive ? "rgba(16, 185, 129, 0.12)" : "var(--bg-card)",
+                color: isActive ? "var(--emerald)" : "var(--text-main)",
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+                transition: "all 0.15s ease",
+              }}
+            >
+              <CatIcon size={15} />
+              <span>{cat.label}</span>
+            </button>
+          );
+        })}
+      </div>
 
-      <section className="achievements-stats">
-        <article className="achievement-stat-card">
-          <span className="achievement-stat-icon stat-green"><Leaf size={20} /></span>
-          <div><strong>{stats.activityCount}</strong><span>Activities logged</span></div>
-        </article>
-        <article className="achievement-stat-card">
-          <span className="achievement-stat-icon stat-orange"><Flame size={20} /></span>
-          <div><strong>{stats.streak} days</strong><span>Current activity streak</span></div>
-        </article>
-        <article className="achievement-stat-card">
-          <span className="achievement-stat-icon stat-purple"><Target size={20} /></span>
-          <div><strong>{stats.completedGoals}</strong><span>Goals completed</span></div>
-        </article>
-      </section>
-
-      <section className="panel achievements-collection">
-        <div className="achievements-collection-heading">
-          <div>
-            <h3>Your Badge Collection</h3>
-            <p>Track your progress toward each milestone.</p>
+      {/* Next Achievable Milestone Callout */}
+      {nextMilestone && (
+        <div
+          className="card-panel next-milestone-banner"
+          style={{
+            padding: "18px 22px",
+            marginBottom: "20px",
+            background: "linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(59, 130, 246, 0.08) 100%)",
+            border: "1.5px solid rgba(16, 185, 129, 0.3)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: "16px",
+            borderRadius: "14px",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "14px", flex: "1 1 300px" }}>
+            <div
+              style={{
+                width: 48,
+                height: 48,
+                borderRadius: "12px",
+                background: "var(--emerald)",
+                color: "#ffffff",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                boxShadow: "0 4px 12px rgba(16, 185, 129, 0.25)",
+              }}
+            >
+              <Sparkles size={24} />
+            </div>
+            <div>
+              <div style={{ fontSize: "0.78rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px", color: "var(--emerald)" }}>
+                Next Achievable Milestone
+              </div>
+              <h3 style={{ margin: "2px 0 3px", fontSize: "1.08rem" }}>{nextMilestone.name}</h3>
+              <p style={{ margin: 0, color: "var(--text-muted)", fontSize: "0.85rem" }}>
+                {nextMilestone.description}
+              </p>
+            </div>
           </div>
-          <div className="achievements-filters" role="group" aria-label="Filter achievements">
-            <button type="button" className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>All</button>
-            <button type="button" className={filter === "unlocked" ? "active" : ""} onClick={() => setFilter("unlocked")}>Earned</button>
-            <button type="button" className={filter === "locked" ? "active" : ""} onClick={() => setFilter("locked")}>Locked</button>
+
+          <div style={{ minWidth: "220px", flex: "0 1 280px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem", marginBottom: "6px", fontWeight: 600 }}>
+              <span style={{ color: "var(--text-muted)" }}>{nextMilestone.progressLabel || "Progress"}</span>
+              <span style={{ color: "var(--emerald)", fontWeight: 700 }}>
+                {Math.round(nextMilestone.progressPercent || 0)}%
+              </span>
+            </div>
+            <div style={{ height: 8, background: "var(--bg-subtle)", borderRadius: 999, overflow: "hidden" }}>
+              <div
+                style={{
+                  height: "100%",
+                  width: `${Math.round(nextMilestone.progressPercent || 0)}%`,
+                  background: "var(--emerald)",
+                  borderRadius: 999,
+                  transition: "width 0.4s ease",
+                }}
+              />
+            </div>
+            {onNavigate && (
+              <div style={{ textAlign: "right", marginTop: "8px" }}>
+                <button
+                  type="button"
+                  onClick={() => onNavigate("Log Activities")}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "var(--emerald)",
+                    fontSize: "0.78rem",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "4px",
+                    padding: 0,
+                  }}
+                >
+                  Log activity to earn <ArrowRight size={12} />
+                </button>
+              </div>
+            )}
           </div>
         </div>
+      )}
 
-        <div className="achievements-grid">
-          {visibleAchievements.map((achievement) => {
-            const Icon = achievement.icon;
-            const progress = Math.min(100, (achievement.current / achievement.target) * 100);
+      {/* Progress Summary Strip */}
+      <div
+        className="card-panel"
+        style={{
+          padding: "14px 20px",
+          marginBottom: "20px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+          gap: "14px",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <Award size={20} style={{ color: "var(--emerald)" }} />
+          <span style={{ fontSize: "0.92rem", fontWeight: 600 }}>
+            {unlockedCount} of {badges.length} Milestones Unlocked
+          </span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", flex: "0 1 200px" }}>
+          <div style={{ flex: 1, height: 7, background: "var(--bg-subtle)", borderRadius: 999, overflow: "hidden" }}>
+            <div
+              style={{
+                height: "100%",
+                width: `${badges.length > 0 ? Math.round((unlockedCount / badges.length) * 100) : 0}%`,
+                background: "var(--emerald)",
+              }}
+            />
+          </div>
+          <span style={{ fontSize: "0.82rem", fontWeight: 700, color: "var(--emerald)" }}>
+            {badges.length > 0 ? Math.round((unlockedCount / badges.length) * 100) : 0}%
+          </span>
+        </div>
+      </div>
+
+      {error && <div className="alert-error" style={{ marginBottom: "16px" }}>{error}</div>}
+
+      {/* Badges Grid */}
+      {loading ? (
+        <div className="card-panel" style={{ padding: "36px", textAlign: "center", color: "var(--text-muted)" }}>
+          Loading achievement progress...
+        </div>
+      ) : filteredBadges.length === 0 ? (
+        <div className="card-panel" style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
+          No badges found for the selected category or filter.
+        </div>
+      ) : (
+        <div
+          className="badges-grid"
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(270px, 1fr))",
+            gap: "18px",
+          }}
+        >
+          {filteredBadges.map((b) => {
+            const visual = BADGE_VISUALS[b.code] || {
+              icon: Award,
+              color: "#6B7B4C",
+              bg: "#E8EEDC",
+              shape: "emblem",
+            };
+            const IconComponent = visual.icon;
+            const pct = Number(b.progressPercent ?? (b.unlocked ? 100 : 0));
+            const category = CATEGORY_MAP[b.code] || "Sustainability Milestones";
+
             return (
-              <article key={achievement.id} className={`achievement-card ${achievement.unlocked ? "is-unlocked" : "is-locked"}`}>
-                <div className={`achievement-icon achievement-${achievement.color}`}>
-                  <Icon size={27} />
-                  {!achievement.unlocked && <span className="achievement-lock"><LockKeyhole size={13} /></span>}
+              <div
+                key={b.id || b.code}
+                className={`card-panel badge-card ${b.unlocked ? "unlocked" : "locked"}`}
+                style={{
+                  padding: "20px",
+                  display: "flex",
+                  flexDirection: "column",
+                  justifyContent: "space-between",
+                  gap: "14px",
+                  borderRadius: "14px",
+                  position: "relative",
+                  border: b.unlocked ? `1.5px solid ${visual.color}` : "1px solid var(--border)",
+                  boxShadow: b.unlocked ? `0 4px 18px ${visual.color}22` : "none",
+                  transition: "transform 0.2s ease, box-shadow 0.2s ease",
+                }}
+              >
+                <div>
+                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "12px" }}>
+                    <div
+                      style={{
+                        width: 52,
+                        height: 52,
+                        borderRadius: visual.shape === "medal" ? "50%" : visual.shape === "shield" ? "8px 8px 18px 18px" : "14px",
+                        background: b.unlocked ? visual.bg : "var(--bg-subtle)",
+                        color: b.unlocked ? visual.color : "var(--text-muted)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        border: b.unlocked ? `2px solid ${visual.color}` : "1px solid var(--border)",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {getShapeIcon(visual.shape, IconComponent)}
+                    </div>
+
+                    <div style={{ textAlign: "right" }}>
+                      {b.unlocked ? (
+                        <span
+                          className="badge-pill-green"
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "4px",
+                            fontSize: "0.76rem",
+                            padding: "3px 9px",
+                          }}
+                        >
+                          <CheckCircle2 size={12} />
+                          Earned
+                        </span>
+                      ) : (
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "4px",
+                            fontSize: "0.74rem",
+                            padding: "3px 9px",
+                            borderRadius: 999,
+                            background: "var(--bg-subtle)",
+                            color: "var(--text-muted)",
+                          }}
+                        >
+                          <Lock size={11} />
+                          Locked
+                        </span>
+                      )}
+                      <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "4px" }}>
+                        {category}
+                      </div>
+                    </div>
+                  </div>
+
+                  <h4 style={{ margin: "0 0 6px", fontSize: "1.02rem" }}>{b.name}</h4>
+                  <p style={{ margin: 0, fontSize: "0.86rem", color: "var(--text-muted)", lineHeight: 1.45 }}>
+                    {b.description}
+                  </p>
                 </div>
-                <div className="achievement-card-title-row">
-                  <h4>{achievement.title}</h4>
-                  {achievement.unlocked && <CheckCircle2 size={17} className="achievement-check" />}
+
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "6px" }}>
+                    <span>{b.progressLabel || (b.unlocked ? "Unlocked" : "In progress")}</span>
+                    <span style={{ fontWeight: 700, color: b.unlocked ? visual.color : "var(--text-main)" }}>
+                      {pct}%
+                    </span>
+                  </div>
+                  <div style={{ height: 7, background: "var(--bg-subtle)", borderRadius: 999, overflow: "hidden" }}>
+                    <div
+                      style={{
+                        height: "100%",
+                        width: `${pct}%`,
+                        background: b.unlocked ? visual.color : "var(--emerald)",
+                        borderRadius: 999,
+                        transition: "width 0.35s ease",
+                      }}
+                    />
+                  </div>
+                  {b.unlocked && (
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "10px", paddingTop: "8px", borderTop: "1px solid var(--border-subtle)" }}>
+                      <span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>
+                        {b.earnedAt ? `Earned ${new Date(b.earnedAt).toLocaleDateString()}` : "Milestone Unlocked"}
+                      </span>
+                      <button
+                        type="button"
+                        className="btn-outline"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSharingBadge(b);
+                        }}
+                        style={{
+                          fontSize: "0.76rem",
+                          padding: "4px 10px",
+                          borderRadius: "6px",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                        }}
+                        title="Share this achievement"
+                      >
+                        <Share2 size={12} />
+                        <span>Share</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
-                <span className="achievement-category">{achievement.category}</span>
-                <p>{achievement.description}</p>
-                <div className="achievement-progress-label">
-                  <span>{achievement.unlocked ? "Completed" : achievement.progressLabel}</span>
-                  <strong>{achievement.unlocked ? "Earned" : `${achievement.current}/${achievement.target}`}</strong>
-                </div>
-                <div className="achievement-progress-track">
-                  <div className="achievement-progress-fill" style={{ width: `${progress}%` }} />
-                </div>
-              </article>
+              </div>
             );
           })}
         </div>
-        {visibleAchievements.length === 0 && <p className="achievements-empty">No badges in this filter yet.</p>}
-      </section>
+      )}
 
-      <section className="achievements-footnote">
-        <Leaf size={18} />
-        <p><strong>How badges are awarded:</strong> activity and streak badges use your logged activities. Goal badges use completed goals passed into this page. Carbon-reduction badges require verified reduction data; they remain locked until that data is supplied. This frontend view does not award or save badges to the backend.</p>
-      </section>
+      {/* Celebration Modal when unlocking a badge */}
+      {celebratingBadge && (
+        <BadgeCelebrationModal
+          badge={celebratingBadge}
+          onShare={(b) => {
+            setCelebratingBadge(null);
+            setSharingBadge(b);
+          }}
+          onClose={() => setCelebratingBadge(null)}
+        />
+      )}
+
+      {/* Share Badge Modal */}
+      {sharingBadge && (
+        <BadgeShareModal
+          badge={sharingBadge}
+          userName={resolvedUserName}
+          onClose={() => setSharingBadge(null)}
+        />
+      )}
     </div>
   );
 }

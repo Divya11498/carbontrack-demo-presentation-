@@ -11,8 +11,8 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Locale;
+import java.util.Map;
 
 @Service
 public class RecommendationService {
@@ -49,7 +49,8 @@ public class RecommendationService {
                             .findById(summary.getActivityTypeId())
                             .orElse(null);
 
-            if (activityType == null || !activityType.isActive()) {
+            if (activityType == null ||
+                    !Boolean.TRUE.equals(activityType.getIsActive())) {
                 continue;
             }
 
